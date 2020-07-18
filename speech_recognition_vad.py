@@ -1,4 +1,5 @@
-import collections, queue
+import collections
+import queue
 import numpy as np
 import pyaudio
 import webrtcvad
@@ -21,7 +22,8 @@ class Audio(object):
             callback(in_data)
             return (None, pyaudio.paContinue)
 
-        callback = lambda in_data: self.buffer_queue.put(in_data)
+        def callback(in_data):
+            return self.buffer_queue.put(in_data)
 
         self.buffer_queue = queue.Queue()
         self.device = device
@@ -60,7 +62,9 @@ class Audio(object):
             data (binary): Input audio stream
             input_rate (int): Input audio rate to resample from
         """
+        # read data in as a string and create a 1D numpy array
         data16 = np.fromstring(string=data, dtype=np.int16)
+        # RATE_PROCESS= 16000 get the len of the data
         resample_size = int(len(data16) / self.input_rate * self.RATE_PROCESS)
         resample = signal.resample(data16, resample_size)
         resample16 = np.array(resample, dtype=np.int16)
@@ -151,7 +155,7 @@ async def main():
 
     model = deepspeech.Model(MODEL, BEAM_WIDTH)
     model.enableDecoderWithLM(LANG_MODEL, TRIE, LM_ALPHA, LM_BETA)
-    vad_audio = VADAudio(aggressiveness=3, device=9, input_rate=44100)
+    vad_audio = VADAudio(aggressiveness=3, device=11, input_rate=48000)
 
     uri = "ws://localhost:8000/ws"
     ws = await websockets.connect(uri, ping_interval=None)

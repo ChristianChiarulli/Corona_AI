@@ -6,11 +6,14 @@ b = Bridge("10.0.0.106")
 
 b.connect()
 
-lights = b.get_light_objects()
+# lights = b.get_light_objects()
 
-print(lights)
+# b.get_sensor_objects()
 
-import random
+
+# print(lights)
+
+# import random
 
 
 app = FastAPI()
