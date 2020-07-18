@@ -4,6 +4,7 @@ import numpy as np
 import pyaudio
 import webrtcvad
 from scipy import signal
+
 import websockets
 import deepspeech
 import asyncio
