@@ -8,9 +8,10 @@ dependencies:
   - matplotlib
   - pandas
   - pip:
-      - deepspeech==0.6.1
+      - deepspeech==0.8.2
       - fastapi==0.59.0
       - numpy==1.18.2
+      - i3ipc==2.2.1
       - phue==1.1
       - Pillow==7.1.1
       - PyAudio==0.2.11

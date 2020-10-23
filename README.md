@@ -27,3 +27,9 @@ uvicorn nlp_server:app --reload
 ```
 python speech_recognition_vad.py
 ```
+
+## Original Deepspeech VAD 
+
+```
+python speech_recognition_vad.py -v 3 -d 11 -r 48000 -m models/deepspeech-0.8.2-models.pbmm
+```

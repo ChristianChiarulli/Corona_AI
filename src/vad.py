@@ -1,31 +1,26 @@
-import collections
-import queue
+import collections, queue
 import numpy as np
 import pyaudio
 import webrtcvad
 from scipy import signal
 
-import websockets
-import deepspeech
-import asyncio
-
-
 class Audio(object):
+    """Streams raw audio from microphone. Data is received in a separate thread, and stored in a buffer, to be read from."""
 
     FORMAT = pyaudio.paInt16
-    RATE_PROCESS = 16000  # VAD only supports 16kHz
-    CHANNELS = 1  # VAD only supprts 1 channel
+    # Network/VAD rate-space
+    RATE_PROCESS = 16000
+    CHANNELS = 1
     BLOCKS_PER_SECOND = 50
 
-    def __init__(self, device, input_rate=RATE_PROCESS):
+    def __init__(self, callback=None, device=None, input_rate=RATE_PROCESS):
         def proxy_callback(in_data, frame_count, time_info, status):
-            # pylint: disable=unused-argument
+            #pylint: disable=unused-argument
+            if self.chunk is not None:
+                in_data = self.wf.readframes(self.chunk)
             callback(in_data)
             return (None, pyaudio.paContinue)
-
-        def callback(in_data):
-            return self.buffer_queue.put(in_data)
-
+        if callback is None: callback = lambda in_data: self.buffer_queue.put(in_data)
         self.buffer_queue = queue.Queue()
         self.device = device
         self.input_rate = input_rate
@@ -35,22 +30,20 @@ class Audio(object):
         self.pa = pyaudio.PyAudio()
 
         kwargs = {
-            "format": self.FORMAT,
-            "channels": self.CHANNELS,
-            "rate": self.input_rate,
-            "input": True,
-            "frames_per_buffer": self.block_size_input,
-            "stream_callback": proxy_callback,
-            "input_device_index": self.device,
+            'format': self.FORMAT,
+            'channels': self.CHANNELS,
+            'rate': self.input_rate,
+            'input': True,
+            'frames_per_buffer': self.block_size_input,
+            'stream_callback': proxy_callback,
         }
 
-        print("CHANNELS: ", self.CHANNELS)
-
         self.chunk = None
-        # print(self.)
+        # if not default device
+        if self.device:
+            kwargs['input_device_index'] = self.device
+
         self.stream = self.pa.open(**kwargs)
-        print("Stream Channels", self.stream._channels)
-        print("Stream type", self.stream)
         self.stream.start_stream()
 
     def resample(self, data, input_rate):
@@ -63,9 +56,7 @@ class Audio(object):
             data (binary): Input audio stream
             input_rate (int): Input audio rate to resample from
         """
-        # read data in as a string and create a 1D numpy array
         data16 = np.fromstring(string=data, dtype=np.int16)
-        # RATE_PROCESS= 16000 get the len of the data
         resample_size = int(len(data16) / self.input_rate * self.RATE_PROCESS)
         resample = signal.resample(data16, resample_size)
         resample16 = np.array(resample, dtype=np.int16)
@@ -73,7 +64,8 @@ class Audio(object):
 
     def read_resampled(self):
         """Return a block of audio data resampled to 16000hz, blocking if necessary."""
-        return self.resample(data=self.buffer_queue.get(), input_rate=self.input_rate)
+        return self.resample(data=self.buffer_queue.get(),
+                             input_rate=self.input_rate)
 
     def read(self):
         """Return a block of audio data, blocking if necessary."""
@@ -84,15 +76,12 @@ class Audio(object):
         self.stream.close()
         self.pa.terminate()
 
-    frame_duration_ms = property(
-        lambda self: 1000 * self.block_size // self.sample_rate
-    )
-
+    frame_duration_ms = property(lambda self: 1000 * self.block_size // self.sample_rate)
 
 class VADAudio(Audio):
     """Filter & segment audio with voice activity detection."""
 
-    def __init__(self, aggressiveness, device, input_rate):
+    def __init__(self, aggressiveness=3, device=None, input_rate=None):
         super().__init__(device=device, input_rate=input_rate)
         self.vad = webrtcvad.Vad(aggressiveness)
 
@@ -105,17 +94,13 @@ class VADAudio(Audio):
             while True:
                 yield self.read_resampled()
 
-    def vad_collector(self, padding_ms=300, ratio=0.75, frames=None):
+    def vad_collector(self, padding_ms=500, ratio=0.75, frames=None):
         """Generator that yields series of consecutive audio frames comprising each utterence, separated by yielding a single None.
             Determines voice activity by ratio of frames in padding_ms. Uses a buffer to include padding_ms prior to being triggered.
             Example: (frame, ..., frame, None, frame, ..., frame, None, ...)
                       |---utterence---|        |---utterence---|
         """
-        # No frames
-        if frames is None:
-            frames = self.frame_generator()
-
-        # We have frames
+        if frames is None: frames = self.frame_generator()
         num_padding_frames = padding_ms // self.frame_duration_ms
         ring_buffer = collections.deque(maxlen=num_padding_frames)
         triggered = False
@@ -143,39 +128,3 @@ class VADAudio(Audio):
                     triggered = False
                     yield None
                     ring_buffer.clear()
-
-
-async def main():
-
-    BEAM_WIDTH = 500
-    LM_ALPHA = 0.75
-    LM_BETA = 1.85
-    MODEL = "./models/output_graph.pbmm"
-    LANG_MODEL = "./models/lm.binary"
-    TRIE = "./models/trie"
-
-    model = deepspeech.Model(MODEL, BEAM_WIDTH)
-    model.enableDecoderWithLM(LANG_MODEL, TRIE, LM_ALPHA, LM_BETA)
-    vad_audio = VADAudio(aggressiveness=3, device=11, input_rate=48000)
-
-    uri = "ws://localhost:8000/ws"
-    ws = await websockets.connect(uri, ping_interval=None)
-
-    stream_context = model.createStream()
-    for frame in vad_audio.vad_collector():
-        if frame is not None:
-            model.feedAudioContent(stream_context, np.frombuffer(frame, np.int16))
-        else:
-            text = model.finishStream(stream_context)
-            try:
-                await ws.send(text)
-                stream_context = model.createStream()
-                returned = await ws.recv()
-                print(returned)
-            except:  # there is clearly a better ay to do this but I have a smol brain
-                print("Reconnecting")
-                ws = await websockets.connect(uri, ping_interval=None)
-
-
-if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(main())
